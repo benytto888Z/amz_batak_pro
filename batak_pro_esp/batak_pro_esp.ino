@@ -1,6 +1,7 @@
 /**********************************************************************
  *  BATAK PRO - Jeu de reflexes (12 boutons LED)  --  VERSION ESP32
- *  Carte    : ESP32 DevKit 38 broches (WROOM)
+ *  Carte    : ESP32 DevKit V1 30 broches (WROOM)
+ *             (compatible aussi 38 broches : memes GPIO utilises)
  *  Afficheur: 6x MAX7219 8x8 (FC-16) EN UNE SEULE CHAINE, 2 zones :
  *             - zone SCORE = 4 modules (gauche)
  *             - zone TEMPS = 2 modules (droite, cote ESP32)
