@@ -4,9 +4,9 @@
 //  *             -> DIP switches en mode "Mega seul" : 3=ON 4=ON, reste OFF
 //  *             -> L'ESP8266 n'est PAS utilise dans la V1 (reserve V2)
 //  *  Afficheur: 6x MAX7219 8x8 (FC-16) EN UNE SEULE CHAINE, 2 zones :
-//  *             - zone SCORE = 4 modules (gauche)
-//  *             - zone TEMPS = 2 modules (droite, cote Arduino)
-//  *  Entrees  : telecommande IR (NEC) + 12 boutons arcade
+//  *             - zone SCORE = 4 modules (gauche)  -> score 4 digits "0078"
+//  *             - zone TEMPS = 2 modules (droite)  -> temps 2 digits "08"
+//  *  Entrees  : telecommande IR (NEC) broche 47 + 12 boutons arcade
 //  *  Sons     : DFPlayer Mini (carte SD, fichiers MP3) sur Serial1
 //  *  Memoire  : TOP 3 scores de chacun des 4 modes en EEPROM
 //  *
@@ -23,15 +23,14 @@
 //  *  DEROULEMENT :
 //  *   - OK -> les 3 meilleurs scores du mode choisi s'affichent 5 s
 //  *     (1er, 2e, 3e), puis compte a rebours 3-2-1 (MP3) -> GO !
-//  *   - Un bouton s'allume au hasard. Touche -> +1 point -> suivant.
-//  *     Trop lent -> la lumiere change toute seule.
-//  *   - Vitesse : 30 s -> +vite toutes les 10 s ; 60 s -> toutes les 20 s.
+//  *   - CLASSIC : un bouton s'allume au hasard. Touche -> +1 point ->
+//  *     suivant. Trop lent -> la lumiere change toute seule.
+//  *     Vitesse : 30 s -> +vite toutes les 10 s ; 60 s -> toutes les 20 s.
+//  *   - FITNESS : *** BRECHE V2 *** (voir playFitnessStep) - provisoirement
+//  *     identique a CLASSIC, sera code etape par etape avec l'app Flutter.
 //  *   - Fin : si le joueur entre dans le TOP 3 -> message de felicitations
 //  *     anime (defilement) + son "record" ; sinon score clignotant + fanfare.
 //  *     Affichage 15 s puis retour au menu. TOP 3 sauvegarde en EEPROM.
-//  *
-//  *  NB : en V1 le type FITNESS joue le meme jeu que CLASSIC (avec son
-//  *  propre TOP 3). La V2 le remplacera par le mode pilote par l'app.
 //  *
 //  *  CARTE SD du DFPlayer : dossier /mp3, fichiers :
 //  *   0001.mp3 bip touche | 0002.mp3 "3,2,1" (~3 s) | 0003.mp3 "GO !"
@@ -54,47 +53,47 @@
 // // 12 LEDs de boutons : broche -> 220R -> LED -> GND (ou transistor si 12V)
 // const uint8_t LED_PIN[12] = {34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45};
 
-// const uint8_t IR_RECEIVE_PIN = 47;    // VS1838B / TSOP38238 OUT
+// const uint8_t IR_RECEIVE_PIN = 47;   // VS1838B / TSOP38238 OUT
 
 // // DFPlayer Mini sur Serial1 : TX1=18 -> (1k) -> RX DFPlayer ; RX1=19 <- TX
 // // (Serial3 = 14/15 reste LIBRE : liaison interne ESP8266 pour la V2)
 // #define DFP_SERIAL Serial1
 
 // // 6x MAX7219 EN UNE SEULE CHAINE : DIN=51, CLK=52, CS=53
-// // Module 0 = celui branche a l'Arduino = extremite DROITE (zone temps)
 // #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 // const uint8_t DISP_CS      = 53;
 // const uint8_t NUM_MODULES  = 6;
 // MD_Parola disp(HARDWARE_TYPE, DISP_CS, NUM_MODULES);
-// const uint8_t ZONE_TIME  = 0;        // modules 0-1 (droite)  -> temps/menu
-// const uint8_t ZONE_SCORE = 1;        // modules 2-5 (gauche)  -> score/nom du jeu
+// const uint8_t ZONE_TIME  = 0;        // -> temps/menu (modules 4-5)
+// const uint8_t ZONE_SCORE = 1;        // -> score/nom du jeu (modules 0-3)
 
 // const uint8_t  DISPLAY_BRIGHT = 6;   // 0..15
-// const uint16_t SCROLL_SPEED   = 60;  // ms/pixel (defilement)
+// const uint16_t SCROLL_SPEED   = 50;  // ms/pixel (defilement)
 
 // /* =================== SONS (pistes SD) ============================== */
 // DFRobotDFPlayerMini dfp;
 // bool dfpOk = false;
 
-// const uint8_t SND_KEY     = 1;
+// const uint8_t    SND_HIT = 1;
 // const uint8_t SND_COUNT   = 2;
-// const uint8_t SND_GO      = 3;
-// const uint8_t SND_HIT     = 4;
+// const uint8_t SND_GO = 3;
+// const uint8_t    SND_KEY  = 4;
 // const uint8_t SND_SUCCESS = 5;
 // const uint8_t SND_RECORD  = 6;
-// const uint8_t DFP_VOLUME  = 24;      // 0..30
+// const uint8_t DFP_VOLUME  = 25;      // 0..30
 
 // void playSound(uint8_t track) {
 //   if (dfpOk) dfp.play(track);
+//  // dfp.pause();
 // }
 
 // /* =================== CODES IR (NEC) ================================ */
-// // Telecommande 21 touches "kit MP3". Sinon : croquis ir_code_finder.
-// const uint8_t IR_KEY_1  = 69;      // type CLASSIC
-// const uint8_t IR_KEY_2  = 70;      // type FITNESS
-// const uint8_t IR_KEY_3  = 71;      // duree 30 s
-// const uint8_t IR_KEY_6  = 67;      // duree 60 s
-// const uint8_t IR_KEY_OK = 28;      // demarrer (touche PLAY/PAUSE)
+// // Codes releves sur VOTRE telecommande (via ir_code_finder).
+// const uint8_t IR_KEY_1  = 69;        // type CLASSIC
+// const uint8_t IR_KEY_2  = 70;        // type FITNESS
+// const uint8_t IR_KEY_3  = 71;        // duree 30 s
+// const uint8_t IR_KEY_6  = 67;        // duree 60 s
+// const uint8_t IR_KEY_OK = 28;        // demarrer (touche OK/PLAY)
 
 // /* =================== REGLAGES JEU ================================== */
 // const uint16_t LIGHT_ON_MS[3] = {1500, 1000, 650}; // duree lumiere / phase
@@ -115,7 +114,7 @@
 // enum GameType  { TYPE_CLASSIC = 0, TYPE_FITNESS = 1 };
 
 // GameState state    = ST_IDLE;
-// GameType  gameType = TYPE_CLASSIC;
+// GameType  gameType = TYPE_CLASSIC;   // le "gamechallenge" selectionne
 // uint8_t   modeSeconds = 30;          // 30 ou 60
 // uint16_t  score = 0;
 // int8_t    finalRank = -1;            // 0..2 si TOP 3, sinon -1
@@ -157,11 +156,11 @@
 //   disp.displayZoneText(ZONE_TIME, timeText, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
 // }
 // void showScore(uint16_t v) {
-//   char b[8]; snprintf(b, sizeof(b), "%4u", v);
+//   char b[8]; snprintf(b, sizeof(b), "%04u", v);   // 4 digits : "0078"
 //   printScoreZone(b);
 // }
 // void showTimeSec(int sec) {
-//   char b[6]; snprintf(b, sizeof(b), "%2d", sec);
+//   char b[6]; snprintf(b, sizeof(b), "%02d", sec); // 2 digits : "08"
 //   printTimeZone(b);
 // }
 
@@ -232,6 +231,82 @@
 //   gapStartMs = millis();
 // }
 
+// /* ---- fin de manche (commune aux deux challenges) ---- */
+// void endRound() {
+//   allLedsOff();
+//   finalRank = insertScore(score);            // TOP 3 ? (sauve EEPROM)
+//   state = ST_GAMEOVER;
+//   stateStartMs = millis();
+//   lastFlashMs  = millis();
+//   flashOn = true;
+
+//   if (finalRank >= 0) {                      // *** FELICITATIONS ***
+//     playSound(SND_RECORD);
+//     char b[40];
+//     snprintf(b, sizeof(b), "BRAVO ! TOP %d - %u PTS", finalRank + 1, score);
+//     scrollScoreZone(b);                      // message anime
+//     printTimeZone("HI");
+//   } else {
+//     playSound(SND_SUCCESS);
+//     showScore(score);
+//     printTimeZone("00");
+//   }
+//   Serial.print(F("Fin. Score = ")); Serial.println(score);
+//   if (finalRank >= 0) {
+//     Serial.print(F("*** TOP ")); Serial.print(finalRank + 1);
+//     Serial.println(F(" - sauvegarde ***"));
+//   }
+// }
+
+// /* ==================================================================
+//  *  CHALLENGE CLASSIC (version 1) - un pas de boucle de la manche
+//  * ================================================================== */
+// void playClassicStep() {
+//   unsigned long now = millis();
+//   long remainMs = (long)modeSeconds * 1000L - (long)(now - roundStartMs);
+
+//   int remainSec = (remainMs > 0) ? (remainMs + 999) / 1000 : 0;
+//   if (remainSec != lastShownSec) {
+//     lastShownSec = remainSec;
+//     showTimeSec(remainSec);
+//   }
+
+//   if (remainMs <= 0) {                       // manche terminee
+//     endRound();
+//     return;
+//   }
+
+//   uint8_t ph = currentPhase();
+
+//   if (inGap) {
+//     if (now - gapStartMs >= GAP_MS[ph]) pickNewLight();
+//   } else {
+//     if (digitalRead(BTN_PIN[litIndex]) == LOW) {     // touche !
+//       score++;
+//       playSound(SND_HIT);
+//       showScore(score);
+//       startGap();
+//     } else if (now - lightOnMs >= LIGHT_ON_MS[ph]) { // trop lent
+//       startGap();
+//     }
+//   }
+// }
+
+// /* ==================================================================
+//  *  CHALLENGE FITNESS (version 2) - *** BRECHE : A CODER ***
+//  *  Sera developpe etape par etape avec l'app Flutter (Wi-Fi ESP8266,
+//  *  work/rest, courbes de vitesse, telemetrie temps de reaction...).
+//  *  PROVISOIRE : joue la meme manche que CLASSIC pour que le mode
+//  *  reste utilisable en attendant la V2.
+//  * ================================================================== */
+// void playFitnessStep() {
+//   // TODO V2 :
+//   //  - recevoir la config du challenge depuis l'app (Serial3/ESP8266)
+//   //  - intervalles work/rest, cibles multiples, duree libre
+//   //  - envoyer hit/miss + temps de reaction a l'app en direct
+//   playClassicStep();                         // provisoire (V1)
+// }
+
 // /* =================== MENU (repos) ================================== */
 // void enterIdle() {
 //   state = ST_IDLE;
@@ -264,11 +339,16 @@
 //     Serial.println(F("ATTENTION : DFPlayer introuvable (jeu silencieux)"));
 //   }
 
-//   // --- Afficheur : 1 chaine, 2 zones ---
-//   disp.begin(2);
-//   disp.setZone(ZONE_SCORE, 0, 3);    // 4 modules suivants (gauche)
-//   disp.setZone(ZONE_TIME,  4, 5);    // 2 modules cote Arduino (droite)
+//          /* playSound(SND_COUNT);        // piste "3, 2, 1" (~3 s)
+//         Serial.println(F("Compte a rebours..."));
+//         delay(3000);*/
 
+//   // --- Afficheur : 1 chaine, 2 zones (config materielle validee) ---
+//   disp.begin(2);
+//   disp.setZone(ZONE_SCORE, 0, 3);    // 4 modules (gauche)
+//   disp.setZone(ZONE_TIME,  4, 5);    // 2 modules (droite)
+
+//   // Modules montes a l'envers -> rotation 180 des deux zones
 //   disp.setZoneEffect(ZONE_SCORE, true, PA_FLIP_UD);
 //   disp.setZoneEffect(ZONE_SCORE, true, PA_FLIP_LR);
 //   disp.setZoneEffect(ZONE_TIME,  true, PA_FLIP_UD);
@@ -343,7 +423,7 @@
 //       if (rankToShow != top3Shown) {
 //         top3Shown = rankToShow;
 //         char b[16];
-//         snprintf(b, sizeof(b), "%d.%4u", rankToShow + 1,
+//         snprintf(b, sizeof(b), "%d.%04u", rankToShow + 1,
 //                  top3[modeIndex()][rankToShow]);
 //         printScoreZone(b);
 //       }
@@ -354,9 +434,11 @@
 //         stateStartMs = now;
 //         score = 0;
 //         showScore(score);
-//         printTimeZone(" 3");
+//         printTimeZone("03");
+      
 //         playSound(SND_COUNT);        // piste "3, 2, 1" (~3 s)
 //         Serial.println(F("Compte a rebours..."));
+//         delay(3000);
 //       }
 //       break;
 //     }
@@ -367,7 +449,7 @@
 //         stateStartMs = millis();
 //         countStep--;
 //         if (countStep > 0) {
-//           char b[6]; snprintf(b, sizeof(b), "%2d", countStep);
+//           char b[6]; snprintf(b, sizeof(b), "%02d", countStep);
 //           printTimeZone(b);
 //         } else {
 //           playSound(SND_GO);
@@ -382,61 +464,17 @@
 //       }
 //       break;
 
-//     /* ---------- la manche ---------- */
-//     case ST_PLAY: {
-//       unsigned long now = millis();
-//       long remainMs = (long)modeSeconds * 1000L - (long)(now - roundStartMs);
-
-//       int remainSec = (remainMs > 0) ? (remainMs + 999) / 1000 : 0;
-//       if (remainSec != lastShownSec) {
-//         lastShownSec = remainSec;
-//         showTimeSec(remainSec);
-//       }
-
-//       if (remainMs <= 0) {                       // manche terminee
-//         allLedsOff();
-//         finalRank = insertScore(score);          // TOP 3 ? (sauve EEPROM)
-//         state = ST_GAMEOVER;
-//         stateStartMs = millis();
-//         lastFlashMs  = millis();
-//         flashOn = true;
-
-//         if (finalRank >= 0) {                    // *** FELICITATIONS ***
-//           playSound(SND_RECORD);
-//           char b[40];
-//           snprintf(b, sizeof(b), "BRAVO ! TOP %d - %u PTS",
-//                    finalRank + 1, score);
-//           scrollScoreZone(b);                    // message anime
-//           printTimeZone("HI");
-//         } else {
-//           playSound(SND_SUCCESS);
-//           showScore(score);
-//           printTimeZone(" 0");
-//         }
-//         Serial.print(F("Fin. Score = ")); Serial.println(score);
-//         if (finalRank >= 0) {
-//           Serial.print(F("*** TOP ")); Serial.print(finalRank + 1);
-//           Serial.println(F(" - sauvegarde ***"));
-//         }
-//         break;
-//       }
-
-//       uint8_t ph = currentPhase();
-
-//       if (inGap) {
-//         if (now - gapStartMs >= GAP_MS[ph]) pickNewLight();
+//     /* ---------- la manche : CLASSIC ou FITNESS ---------- */
+//     case ST_PLAY:
+//       if (gameType == TYPE_CLASSIC) {
+//         // ============ VERSION 1 : CHALLENGE CLASSIC ============
+//         playClassicStep();
 //       } else {
-//         if (digitalRead(BTN_PIN[litIndex]) == LOW) {     // touche !
-//           score++;
-//           playSound(SND_HIT);
-//           showScore(score);
-//           startGap();
-//         } else if (now - lightOnMs >= LIGHT_ON_MS[ph]) { // trop lent
-//           startGap();
-//         }
+//         // ============ VERSION 2 : CHALLENGE FITNESS ============
+//         // (breche : a coder etape par etape - voir playFitnessStep)
+//         playFitnessStep();
 //       }
 //       break;
-//     }
 
 //     /* ---------- resultat 15 s puis retour menu ---------- */
 //     case ST_GAMEOVER: {
