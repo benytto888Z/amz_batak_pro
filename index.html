@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BARTACK PRO — Testeur WebSocket</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; background: #101418; color: #e8edf2;
+         padding: 16px; max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; color: #ffd966; }
+  .sub { color: #8fa3b0; font-size: 13px; margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  input[type=text] { flex: 1; min-width: 200px; padding: 10px; border-radius: 8px;
+         border: 1px solid #39434e; background: #1a2027; color: #e8edf2; font-size: 14px; }
+  button { padding: 10px 16px; border-radius: 8px; border: none; cursor: pointer;
+         font-size: 14px; font-weight: bold; }
+  .b-co { background: #38761d; color: #fff; }
+  .b-dis { background: #990000; color: #fff; }
+  .b-send { background: #1c4587; color: #fff; }
+  .b-small { background: #2b3440; color: #cfe2f3; font-weight: normal; font-size: 12px; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #status { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;
+         font-weight: bold; background: #2b3440; }
+  #status.ok  { background: #1d4620; color: #b6d7a8; }
+  #status.ko  { background: #4a1414; color: #ea9999; }
+  #log { background: #0b0e11; border: 1px solid #39434e; border-radius: 8px;
+         padding: 10px; height: 320px; overflow-y: auto; font-family: monospace;
+         font-size: 12.5px; white-space: pre-wrap; word-break: break-all; }
+  .tx { color: #ffd966; }
+  .rx { color: #93c47d; }
+  .ev { color: #8fa3b0; }
+  .er { color: #ea9999; }
+  .quick { margin: 10px 0; }
+  .quick button { margin: 3px 4px 3px 0; }
+  .hint { font-size: 12px; color: #8fa3b0; margin-top: 12px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <h1>&#9889; BARTACK PRO — Testeur WebSocket</h1>
+  <div class="sub">Étape 2 : connectez d'abord votre appareil au Wi-Fi <b>AMZ-BATAK</b> (mdp : AMZ123456), puis cliquez Connecter.</div>
+
+  <div id="status">DÉCONNECTÉ</div>
+
+  <div class="row">
+    <input type="text" id="url" value="ws://192.168.4.1:81/">
+    <button class="b-co" id="btnCo" onclick="connect()">Connecter</button>
+    <button class="b-dis" id="btnDis" onclick="disconnect()" disabled>Fermer</button>
+  </div>
+
+  <div class="row">
+    <input type="text" id="msg" value='{"t":"hello","app":"ws_test","ver":"1.0","lang":"fr"}'>
+    <button class="b-send" id="btnSend" onclick="send()" disabled>Envoyer</button>
+  </div>
+
+  <div class="quick">
+    <button class="b-small" onclick="preset('{\'t\':\'hello\',\'app\':\'ws_test\',\'ver\':\'1.0\',\'lang\':\'fr\'}')">hello</button>
+    <button class="b-small" onclick="preset('{\'t\':\'ping\',\'seq\':1}')">ping</button>
+    <button class="b-small" onclick="preset('{\'t\':\'start\'}')">start</button>
+    <button class="b-small" onclick="preset('{\'t\':\'stop\'}')">stop</button>
+    <button class="b-small" onclick="preset('{\'t\':\'quit\'}')">quit</button>
+    <button class="b-small" onclick="preset(CONFIGURE)">configure (exemple HIIT)</button>
+    <button class="b-small" onclick="document.getElementById('log').innerHTML=''">vider le journal</button>
+  </div>
+
+  <div id="log"></div>
+
+  <div class="hint">
+    &#9432; À l'étape 2, le Mega n'a pas encore le protocole : une connexion qui <b>tient</b>
+    (statut vert, pas de FERMÉ immédiat) suffit à valider le pont ESP8266.
+    Avec le croquis d'écho chargé dans le Mega, chaque envoi doit renvoyer
+    <span class="rx">{"t":"echo","got":"..."}</span>.
+    À partir de l'étape 3, hello/ping/configure recevront de vraies réponses.
+  </div>
+
+<script>
+  const CONFIGURE = JSON.stringify({t:"configure",mode:"hiit",program:{name:"HIIT Test",
+    rounds:[{workSec:20,restSec:10,lightOnMs:1200,gapMs:250,accel:1},
+            {workSec:20,restSec:0,lightOnMs:900,gapMs:200,accel:1}],
+    simultaneous:1,missMode:"skip"}});
+
+  let s = null;
+  const $ = id => document.getElementById(id);
+
+  function stamp() {
+    const d = new Date();
+    return d.toTimeString().slice(0,8) + "." + String(d.getMilliseconds()).padStart(3,"0");
+  }
+  function log(cls, txt) {
+    const el = $("log");
+    el.innerHTML += '<span class="ev">' + stamp() + '</span> <span class="' + cls + '">' + txt.replace(/</g,"&lt;") + '</span>\n';
+    el.scrollTop = el.scrollHeight;
+  }
+  function setStatus(txt, cls) {
+    const el = $("status");
+    el.textContent = txt; el.className = cls || "";
+  }
+  function preset(p) { $("msg").value = p.replace(/'/g, '"'); }
+
+  function connect() {
+    const url = $("url").value.trim();
+    log("ev", "Connexion a " + url + " ...");
+    try { s = new WebSocket(url); }
+    catch (e) { log("er", "ERREUR : " + e.message); return; }
+    setStatus("CONNEXION...", "");
+    s.onopen = () => {
+      setStatus("CONNECTÉ à " + url, "ok");
+      log("ev", "&#10004; CONNECTÉ");
+      $("btnCo").disabled = true; $("btnDis").disabled = false; $("btnSend").disabled = false;
+    };
+    s.onmessage = e => log("rx", "&#8592; RECU : " + e.data);
+    s.onerror = () => log("er", "&#10008; Erreur socket (mauvais Wi-Fi ? ESP éteint ?)");
+    s.onclose = e => {
+      setStatus("DÉCONNECTÉ", "ko");
+      log("ev", "FERMÉ (code " + e.code + ")");
+      $("btnCo").disabled = false; $("btnDis").disabled = true; $("btnSend").disabled = true;
+      s = null;
+    };
+  }
+  function disconnect() { if (s) s.close(); }
+  function send() {
+    if (!s || s.readyState !== 1) { log("er", "Pas connecté."); return; }
+    const m = $("msg").value;
+    s.send(m);
+    log("tx", "&#8594; ENVOYÉ : " + m);
+  }
+</script>
+</body>
+</html>
